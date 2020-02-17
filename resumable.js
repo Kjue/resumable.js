@@ -34,6 +34,21 @@
     // PROPERTIES
     var $ = this;
     $.files = [];
+    // Format is:
+    // https://myaccount.blob.core.windows.net/mycontainer/myblob?comp=block&blockid=id
+    // blockid, a valid Base64 string value
+    // timeout, optional
+    // Headers:
+    // Authorization, required
+    // Date or x-ms-date, required
+    // x-ms-version, required
+    // Content-Length, required, The length of the block content in bytes
+    // **x-ms-lease-id:<ID>, required if leased??
+    // x-ms-blob-content-type, preferred to use from file details
+    // body, The request body contains the content of the block.
+    //
+    // Resumable uses uniqueIdentifier to verify file with upload. Not used anymore.
+    // Blobs get their ID from their address, so different mechanism. Blocks need id though.
     $.defaults = {
       chunkSize:1*1024*1024,
       forceChunkSize:false,
@@ -686,6 +701,7 @@
       $.xhr = null;
 
       // test() makes a GET request without any data to see if the chunk has already been uploaded in a previous session
+      // TODO: Azure has a similar mechanism for querying the chunks with different params.
       $.test = function(){
         // Set up request and listen for event
         $.xhr = new XMLHttpRequest();
@@ -713,6 +729,11 @@
           params.push([encodeURIComponent(parameterNamespace+k), encodeURIComponent(v)].join('='));
         });
         // Add extra data to identify chunk
+        // TODO: Azure has a similar mechanism for querying the chunks with different params.
+        //
+        // It is possible to use Get Block List REST API to query uncommitted parts.
+        // However it is plausible to also keep track of that locally as the info is the same.
+        // https://docs.microsoft.com/en-us/rest/api/storageservices/get-block-list
         params = params.concat(
           [
             // define key/value pairs for additional parameters
@@ -812,6 +833,33 @@
         $.xhr.addEventListener('timeout', doneHandler, false);
 
         // Set up the basic query data from Resumable
+        // TODO: Azure needs differently named params and not all of them.
+        // Format is:
+        // https://myaccount.blob.core.windows.net/mycontainer/myblob?comp=block&blockid=id
+        // blockid, a valid Base64 string value
+        // timeout, optional
+        // Headers:
+        // Authorization, required
+        // Date or x-ms-date, required
+        // x-ms-version, required
+        // Content-Length, required, The length of the block content in bytes
+        // x-ms-lease-id:<ID>, required if leased??
+        // x-ms-blob-content-type, preferred to use from file details
+        // body, The request body contains the content of the block.
+
+        // fileParameterName:'file', // Not used
+        // chunkNumberParameterName: 'blockid',
+        // dateParameterName: 'x-ms-date', // Maybe comes from SAS
+        // versionParameterName: 'x-ms-version', // Maybe comes from SAS
+        // currentChunkSizeParameterName: 'Content-Length',
+        // typeParameterName: 'x-ms-blob-content-type',
+        // chunkSizeParameterName: 'resumableChunkSize', // Not used
+        // totalSizeParameterName: 'resumableTotalSize', // Not used
+        // identifierParameterName: 'resumableIdentifier', // Not used, assigned per file
+        // fileNameParameterName: 'resumableFilename', // Not used
+        // relativePathParameterName: 'resumableRelativePath', // Not used
+        // totalChunksParameterName: 'resumableTotalChunks', // Not used
+  
         var query = [
           ['chunkNumberParameterName', $.offset + 1],
           ['chunkSizeParameterName', $.getOpt('chunkSize')],
@@ -844,6 +892,7 @@
         var data = null;
         var params = [];
 
+        // TODO: Azure check that the body is the block only.
         var parameterNamespace = $.getOpt('parameterNamespace');
                 if ($.getOpt('method') === 'octet') {
                     // Add data from the query options
@@ -871,6 +920,8 @@
                     }
                 }
 
+        // For uploading the target parameter is the upload url.
+        // TODO: Azure uses the blob name as the target. Should reconstruct that? With relative path?
         var target = $h.getTarget('upload', params);
         var method = $.getOpt('uploadMethod');
 
@@ -989,6 +1040,7 @@
       });
       if(!outstanding) {
         // All chunks have been uploaded, complete
+        // TODO: Azure put blocks need to be committed. This will be the place to call it.
         $.fire('complete');
       }
       return(false);
