@@ -34,34 +34,59 @@
     // PROPERTIES
     var $ = this;
     $.files = [];
+    // Format is:
+    // https://myaccount.blob.core.windows.net/mycontainer/myblob?comp=block&blockid=id
+    // blockid, a valid Base64 string value
+    // timeout, optional
+    // Headers:
+    // Authorization, required
+    // Date or x-ms-date, required
+    // x-ms-version, required
+    // Content-Length, required, The length of the block content in bytes
+    // **x-ms-lease-id:<ID>, required if leased??
+    // x-ms-blob-content-type, preferred to use from file details
+    // body, The request body contains the content of the block.
+    //
+    // Resumable uses uniqueIdentifier to verify file with upload. Not used anymore.
+    // Blobs get their ID from their address, so different mechanism. Blocks need id though.
     $.defaults = {
       chunkSize:1*1024*1024,
       forceChunkSize:false,
       simultaneousUploads:3,
-      fileParameterName:'file',
-      chunkNumberParameterName: 'resumableChunkNumber',
-      chunkSizeParameterName: 'resumableChunkSize',
-      currentChunkSizeParameterName: 'resumableCurrentChunkSize',
-      totalSizeParameterName: 'resumableTotalSize',
-      typeParameterName: 'resumableType',
-      identifierParameterName: 'resumableIdentifier',
-      fileNameParameterName: 'resumableFilename',
-      relativePathParameterName: 'resumableRelativePath',
-      totalChunksParameterName: 'resumableTotalChunks',
+      fileParameterName:'file', // Not used
+      azureCommandName: 'comp',
+      azureBlockCommand: 'block',
+      azureBlockListCommand: 'blocklist',
+      azureBlobTypeParameterName: 'x-ms-blob-type',
+      azureBlobTypeValue: 'BlockBlob',
+      chunkNumberParameterName: 'blockid',
+      dateParameterName: 'x-ms-date',
+      versionParameterName: 'x-ms-version',
+      versionValue: '2011-08-18',
+      corsPolicyParameterName: 'Access-Control-Allow-Origin',
+      corsPolicyAllow: 'http://localhost:8080',
+      contentLengthParameterName: 'Content-Length',
+      typeParameterName: 'x-ms-blob-content-type',
+      chunkSizeParameterName: 'resumableChunkSize', // Not used
+      totalSizeParameterName: 'resumableTotalSize', // Not used
+      identifierParameterName: 'resumableIdentifier', // Not used, assigned per file
+      fileNameParameterName: 'resumableFilename', // Not used
+      relativePathParameterName: 'resumableRelativePath', // Not used
+      totalChunksParameterName: 'resumableTotalChunks', // Not used
       dragOverClass: 'dragover',
       throttleProgressCallbacks: 0.5,
       query:{},
       headers:{},
       preprocess:null,
       preprocessFile:null,
-      method:'multipart',
-      uploadMethod: 'POST',
+      method:'octet',
+      uploadMethod: 'PUT',
       testMethod: 'GET',
       prioritizeFirstAndLastChunk:false,
       target:'/',
       testTarget: null,
       parameterNamespace:'',
-      testChunks:true,
+      testChunks:false,
       generateUniqueIdentifier:null,
       getTarget:null,
       maxChunkRetries:100,
@@ -400,7 +425,7 @@
         var fileType = file.type; // e.g video/mp4
         if(o.fileType.length > 0){
           var fileTypeFound = false;
-          for(var index in o.fileType){
+          for (var index in o.fileType){
             // For good behaviour we do some inital sanitizing. Remove spaces and lowercase all
             o.fileType[index] = o.fileType[index].replace(/\s/g, '').toLowerCase();
 
@@ -606,6 +631,176 @@
         });
         return(!outstanding);
       };
+      $.getPutBlockListXML = function(){
+        var request = '<?xml version="1.0" encoding="utf-8"?>\n<BlockList>\n';
+        if ($.preprocessState === 1) {
+          return(false);
+        }
+        if (!$.chunks) {
+          return(false);
+        }
+        for (var i in $.chunks){
+          var status = $.chunks[i].status()
+          status = status == 'success'
+            ? 'Latest'
+            : 'Uncommitted';
+          var id = $.chunks[i].chunkId;
+
+          // console.log(`${atob(id)} - ${status}`);
+          request += `  <${status}>${id}</${status}>\n`
+        }
+        request += '</BlockList>';
+        return(request);
+      };
+      $.sendAzurePutBlobInit = function(){
+        // if($.chunks){
+        //   // If chunks is initialized this is likely already late.
+        //   return(false);
+        // }
+
+        // Set up request and listen for event
+        var requestInit = new XMLHttpRequest();
+
+        // Done (either done, failed or retry)
+        var doneHandler = function(e){
+          // console.log(`From init ${e.target.response}`);
+          // console.log(`From init ${e.target.responseUrl}`);
+        };
+        requestInit.addEventListener('load', doneHandler, false);
+        requestInit.addEventListener('error', doneHandler, false);
+        requestInit.addEventListener('timeout', doneHandler, false);
+
+        // Add data from the query options
+        var params = [];
+        var parameterNamespace = $.getOpt('parameterNamespace');
+        var customQuery = $.getOpt('query');
+        if(typeof customQuery == 'function') customQuery = customQuery($.fileObj, $);
+        $h.each(customQuery, function(k,v){
+          params.push([encodeURIComponent(parameterNamespace+k), encodeURIComponent(v)].join('='));
+        });
+        params = params.concat(
+          [
+            // define key/value pairs for additional parameters
+            // ['azureCommandName', $.getOpt('azureBlockListCommand')]
+          ].filter(function(pair){
+            // include items that resolve to truthy values
+            // i.e. exclude false, null, undefined and empty strings
+            return $.getOpt(pair[0]);
+          })
+          .map(function(pair){
+            // map each key/value pair to its final form
+            return [
+              parameterNamespace + $.getOpt(pair[0]),
+              encodeURIComponent(pair[1])
+            ].join('=');
+          })
+        );
+
+        // Append the relevant chunk and send it
+        var target = $h.getTarget('upload', params);
+        var method = $.getOpt('uploadMethod');
+        requestInit.open(method, target);
+        requestInit.timeout = $.getOpt('xhrTimeout');
+        requestInit.withCredentials = $.getOpt('withCredentials');
+
+        // Add data from header options
+        // var customHeaders = $.getOpt('headers');
+        // if(typeof customHeaders === 'function') {
+        //   customHeaders = customHeaders($.fileObj, $);
+        // }
+
+        var customHeaders = {};
+        // customHeaders[$.getOpt('contentLengthParameterName')] = 0;
+        customHeaders[$.getOpt('typeParameterName')] = $.file.type;
+        // customHeaders[$.getOpt('azureBlobTypeParameterName')] = $.getOpt('azureBlobTypeValue');
+        customHeaders[$.getOpt('azureBlobTypeParameterName')] = $.getOpt('azureBlobTypeValue');
+        customHeaders[$.getOpt('versionParameterName')] = $.getOpt('versionValue');
+
+        if ($.getOpt('withCredentials')) {
+          // Access-Control-Allow-Origin: *
+          customHeaders[$.getOpt('corsPolicyParameterName')] = $.getOpt('corsPolicyAllow');
+        }
+
+        $h.each(customHeaders, function(k,v) {
+          requestInit.setRequestHeader(k, v);
+        });
+        requestInit.send('Kilroy was here.');
+      };
+      $.sendAzurePutBlockList = function(){
+        if(!$.isComplete()){
+          return(false);
+        }
+        if(!$.chunks){
+          return(false);
+        }
+
+        // Set up request and listen for event
+        var requestList = new XMLHttpRequest();
+        var body = $.getPutBlockListXML();
+
+        // Done (either done, failed or retry)
+        var doneHandler = function(e){
+          // console.log(`From put ${e.target.response}`);
+          // console.log(`From put ${e.target.responseUrl}`);
+        };
+        requestList.addEventListener('load', doneHandler, false);
+        requestList.addEventListener('error', doneHandler, false);
+        requestList.addEventListener('timeout', doneHandler, false);
+
+        // Add data from the query options
+        var params = [];
+        var parameterNamespace = $.getOpt('parameterNamespace');
+        var customQuery = $.getOpt('query');
+        if(typeof customQuery == 'function') customQuery = customQuery($.fileObj, $);
+        $h.each(customQuery, function(k,v){
+          params.push([encodeURIComponent(parameterNamespace+k), encodeURIComponent(v)].join('='));
+        });
+        params = params.concat(
+          [
+            // define key/value pairs for additional parameters
+            ['azureCommandName', $.getOpt('azureBlockListCommand')]
+          ].filter(function(pair){
+            // include items that resolve to truthy values
+            // i.e. exclude false, null, undefined and empty strings
+            return $.getOpt(pair[0]);
+          })
+          .map(function(pair){
+            // map each key/value pair to its final form
+            return [
+              parameterNamespace + $.getOpt(pair[0]),
+              encodeURIComponent(pair[1])
+            ].join('=');
+          })
+        );
+
+        // Append the relevant chunk and send it
+        var target = $h.getTarget('upload', params);
+        var method = $.getOpt('uploadMethod');
+        requestList.open(method, target);
+        requestList.timeout = $.getOpt('xhrTimeout');
+        requestList.withCredentials = $.getOpt('withCredentials');
+
+        // Add data from header options
+        var customHeaders = {};
+        customHeaders['Content-Type'] = 'text/plain; charset=UTF-8';
+        customHeaders[$.getOpt('versionParameterName')] = $.getOpt('versionValue');
+        customHeaders[$.getOpt('typeParameterName')] = $.file.type;
+
+        // In case pricing tier needs to be set, need to use a newer API.
+        // customHeaders[$.getOpt('versionParameterName')] = '2018-11-09';
+        // customHeaders['x-ms-access-tier'] = 'Hot';
+
+        if ($.getOpt('withCredentials')) {
+          // Access-Control-Allow-Origin: *
+          requestList.setRequestHeader($.getOpt('corsPolicyParameterName'), $.getOpt('corsPolicyAllow'));
+        }
+
+        $h.each(customHeaders, function(k,v) {
+          requestList.setRequestHeader(k, v);
+        });
+        console.log('Showing headers before commit', customHeaders);
+        requestList.send(body);
+      };
       $.pause = function(pause){
           if(typeof(pause)==='undefined'){
               $._pause = ($._pause ? false : true);
@@ -663,9 +858,10 @@
       $.getOpt = resumableObj.getOpt;
       $.resumableObj = resumableObj;
       $.fileObj = fileObj;
+      $.offset = offset;
+      $.chunkId = btoa(String($.offset).padStart(16, '0'));
       $.fileObjSize = fileObj.size;
       $.fileObjType = fileObj.file.type;
-      $.offset = offset;
       $.callback = callback;
       $.lastProgressCallback = (new Date);
       $.tested = false;
@@ -686,6 +882,7 @@
       $.xhr = null;
 
       // test() makes a GET request without any data to see if the chunk has already been uploaded in a previous session
+      // TODO: Azure has a similar mechanism for querying the chunks with different params.
       $.test = function(){
         // Set up request and listen for event
         $.xhr = new XMLHttpRequest();
@@ -713,12 +910,17 @@
           params.push([encodeURIComponent(parameterNamespace+k), encodeURIComponent(v)].join('='));
         });
         // Add extra data to identify chunk
+        // TODO: Azure has a similar mechanism for querying the chunks with different params.
+        //
+        // It is possible to use Get Block List REST API to query uncommitted parts.
+        // However it is plausible to also keep track of that locally as the info is the same.
+        // https://docs.microsoft.com/en-us/rest/api/storageservices/get-block-list
         params = params.concat(
           [
             // define key/value pairs for additional parameters
             ['chunkNumberParameterName', $.offset + 1],
             ['chunkSizeParameterName', $.getOpt('chunkSize')],
-            ['currentChunkSizeParameterName', $.endByte - $.startByte],
+            ['contentLengthParameterName', $.endByte - $.startByte],
             ['totalSizeParameterName', $.fileObjSize],
             ['typeParameterName', $.fileObjType],
             ['identifierParameterName', $.fileObj.uniqueIdentifier],
@@ -746,6 +948,10 @@
         var customHeaders = $.getOpt('headers');
         if(typeof customHeaders === 'function') {
           customHeaders = customHeaders($.fileObj, $);
+        }
+        if ($.getOpt('withCredentials')) {
+          // Access-Control-Allow-Origin: *
+          $.xhr.setRequestHeader($.getOpt('corsPolicyParameterName'), $.getOpt('corsPolicyAllow'));
         }
         $h.each(customHeaders, function(k,v) {
           $.xhr.setRequestHeader(k, v);
@@ -812,16 +1018,37 @@
         $.xhr.addEventListener('timeout', doneHandler, false);
 
         // Set up the basic query data from Resumable
+        // TODO: Azure needs differently named params and not all of them.
+        // Format is:
+        // https://myaccount.blob.core.windows.net/mycontainer/myblob?comp=block&blockid=id
+        // blockid, a valid Base64 string value
+        // timeout, optional
+        // Headers:
+        // Authorization, required
+        // Date or x-ms-date, required
+        // x-ms-version, required
+        // Content-Length, required, The length of the block content in bytes
+        // x-ms-lease-id:<ID>, required if leased??
+        // x-ms-blob-content-type, preferred to use from file details
+        // body, The request body contains the content of the block.
+
+        // fileParameterName:'file', // Not used
+        // chunkNumberParameterName: 'blockid',
+        // dateParameterName: 'x-ms-date', // Maybe comes from SAS
+        // versionParameterName: 'x-ms-version', // Maybe comes from SAS
+        // contentLengthParameterName: 'Content-Length',
+        // typeParameterName: 'x-ms-blob-content-type',
+        // chunkSizeParameterName: 'resumableChunkSize', // Not used
+        // totalSizeParameterName: 'resumableTotalSize', // Not used
+        // identifierParameterName: 'resumableIdentifier', // Not used, assigned per file
+        // fileNameParameterName: 'resumableFilename', // Not used
+        // relativePathParameterName: 'resumableRelativePath', // Not used
+        // totalChunksParameterName: 'resumableTotalChunks', // Not used
+  
         var query = [
-          ['chunkNumberParameterName', $.offset + 1],
-          ['chunkSizeParameterName', $.getOpt('chunkSize')],
-          ['currentChunkSizeParameterName', $.endByte - $.startByte],
-          ['totalSizeParameterName', $.fileObjSize],
-          ['typeParameterName', $.fileObjType],
-          ['identifierParameterName', $.fileObj.uniqueIdentifier],
-          ['fileNameParameterName', $.fileObj.fileName],
-          ['relativePathParameterName', $.fileObj.relativePath],
-          ['totalChunksParameterName', $.fileObj.chunks.length],
+          ['azureCommandName', $.getOpt('azureBlockCommand')],
+          ['chunkNumberParameterName', $.chunkId],
+          ['timeout', $.getOpt('xhrTimeout')]
         ].filter(function(pair){
           // include items that resolve to truthy values
           // i.e. exclude false, null, undefined and empty strings
@@ -844,33 +1071,36 @@
         var data = null;
         var params = [];
 
+        // TODO: Azure check that the body is the block only.
         var parameterNamespace = $.getOpt('parameterNamespace');
-                if ($.getOpt('method') === 'octet') {
-                    // Add data from the query options
-                    data = bytes;
-                    $h.each(query, function (k, v) {
-                        params.push([encodeURIComponent(parameterNamespace + k), encodeURIComponent(v)].join('='));
-                    });
-                } else {
-                    // Add data from the query options
-                    data = new FormData();
-                    $h.each(query, function (k, v) {
-                        data.append(parameterNamespace + k, v);
-                        params.push([encodeURIComponent(parameterNamespace + k), encodeURIComponent(v)].join('='));
-                    });
-                    if ($.getOpt('chunkFormat') == 'blob') {
-                        data.append(parameterNamespace + $.getOpt('fileParameterName'), bytes, $.fileObj.fileName);
-                    }
-                    else if ($.getOpt('chunkFormat') == 'base64') {
-                        var fr = new FileReader();
-                        fr.onload = function (e) {
-                            data.append(parameterNamespace + $.getOpt('fileParameterName'), fr.result);
-                            $.xhr.send(data);
-                        }
-                        fr.readAsDataURL(bytes);
-                    }
-                }
+        if ($.getOpt('method') === 'octet') {
+          // Add data from the query options
+          data = bytes;
+          $h.each(query, function (k, v) {
+            params.push([encodeURIComponent(parameterNamespace + k), encodeURIComponent(v)].join('='));
+          });
+        } else {
+          // Add data from the query options
+          data = new FormData();
+          $h.each(query, function (k, v) {
+            data.append(parameterNamespace + k, v);
+            params.push([encodeURIComponent(parameterNamespace + k), encodeURIComponent(v)].join('='));
+          });
+          if ($.getOpt('chunkFormat') == 'blob') {
+            data.append(parameterNamespace + $.getOpt('fileParameterName'), bytes, $.fileObj.fileName);
+          }
+          else if ($.getOpt('chunkFormat') == 'base64') {
+            var fr = new FileReader();
+            fr.onload = function (e) {
+              data.append(parameterNamespace + $.getOpt('fileParameterName'), fr.result);
+              $.xhr.send(data);
+            }
+            fr.readAsDataURL(bytes);
+          }
+        }
 
+        // For uploading the target parameter is the upload url.
+        // TODO: Azure uses the blob name as the target. Should reconstruct that? With relative path?
         var target = $h.getTarget('upload', params);
         var method = $.getOpt('uploadMethod');
 
@@ -881,9 +1111,15 @@
         $.xhr.timeout = $.getOpt('xhrTimeout');
         $.xhr.withCredentials = $.getOpt('withCredentials');
         // Add data from header options
-        var customHeaders = $.getOpt('headers');
+        var customHeaders = Object.assign({}, $.getOpt('headers'));
         if(typeof customHeaders === 'function') {
           customHeaders = customHeaders($.fileObj, $);
+        }
+        customHeaders[$.getOpt('versionParameterName')] = $.getOpt('versionValue');
+
+        if ($.getOpt('withCredentials')) {
+          // Access-Control-Allow-Origin: *
+          $.xhr.setRequestHeader($.getOpt('corsPolicyParameterName'), $.getOpt('corsPolicyAllow'));
         }
 
         $h.each(customHeaders, function(k,v) {
@@ -891,7 +1127,7 @@
         });
 
         if ($.getOpt('chunkFormat') == 'blob') {
-            $.xhr.send(data);
+          $.xhr.send(data);
         }
       };
       $.abort = function(){
@@ -989,11 +1225,16 @@
       });
       if(!outstanding) {
         // All chunks have been uploaded, complete
+        // TODO: Azure put blocks need to be committed. This will be the place to call it.
+
+        $h.each($.files, function(file){
+          file.sendAzurePutBlockList();
+        });
+
         $.fire('complete');
       }
       return(false);
     };
-
 
     // PUBLIC METHODS FOR RESUMABLE.JS
     $.assignBrowse = function(domNodes, isDirectory){
@@ -1083,6 +1324,10 @@
       // Make sure we don't start too many uploads at once
       if($.isUploading()) return;
       // Kick off the queue
+      // $h.each($.files, function(file){
+      //   file.sendAzurePutBlobInit();
+      // });
+
       $.fire('uploadStart');
       for (var num=1; num<=$.getOpt('simultaneousUploads'); num++) {
         $.uploadNextChunk();
@@ -1097,7 +1342,7 @@
     };
     $.cancel = function(){
       $.fire('beforeCancel');
-      for(var i = $.files.length - 1; i >= 0; i--) {
+      for (var i = $.files.length - 1; i >= 0; i--) {
         $.files[i].cancel();
       }
       $.fire('cancel');
@@ -1119,7 +1364,7 @@
       appendFilesFromFileList(files, event);
     };
     $.removeFile = function(file){
-      for(var i = $.files.length - 1; i >= 0; i--) {
+      for (var i = $.files.length - 1; i >= 0; i--) {
         if($.files[i] === file) {
           $.files.splice(i, 1);
         }
