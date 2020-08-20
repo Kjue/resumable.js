@@ -50,21 +50,36 @@
     // Resumable uses uniqueIdentifier to verify file with upload. Not used anymore.
     // Blobs get their ID from their address, so different mechanism. Blocks need id though.
     $.defaults = {
+      /**
+       * User defined options expected for successful operation.
+       */
+      query:{},
+      target:'/',
+      headers:{},
+
+      /**
+       * Options available for customization.
+       */
       chunkSize:1*1024*1024,
       forceChunkSize:false,
       simultaneousUploads:3,
       fileParameterName:'file', // Not used
+
+      /**
+       * Azure upload specific options. Important ones up top.
+       */
+      msVersionName: 'x-ms-version',
+      msVersion: '2011-08-18',
+      corsPolicyParameterName: 'Access-Control-Allow-Origin',
+      corsPolicyAllow: 'http://localhost:8080',
+      azureBlobTypeParameterName: 'x-ms-blob-type',
+      azureBlobTypeValue: 'BlockBlob',
+
       azureCommandName: 'comp',
       azureBlockCommand: 'block',
       azureBlockListCommand: 'blocklist',
-      azureBlobTypeParameterName: 'x-ms-blob-type',
-      azureBlobTypeValue: 'BlockBlob',
       chunkNumberParameterName: 'blockid',
       dateParameterName: 'x-ms-date',
-      versionParameterName: 'x-ms-version',
-      versionValue: '2011-08-18',
-      corsPolicyParameterName: 'Access-Control-Allow-Origin',
-      corsPolicyAllow: 'http://localhost:8080',
       contentLengthParameterName: 'Content-Length',
       typeParameterName: 'x-ms-blob-content-type',
       chunkSizeParameterName: 'resumableChunkSize', // Not used
@@ -73,17 +88,18 @@
       fileNameParameterName: 'resumableFilename', // Not used
       relativePathParameterName: 'resumableRelativePath', // Not used
       totalChunksParameterName: 'resumableTotalChunks', // Not used
+
+      /**
+       * Other options.
+       */
       dragOverClass: 'dragover',
       throttleProgressCallbacks: 0.5,
-      query:{},
-      headers:{},
       preprocess:null,
       preprocessFile:null,
       method:'octet',
       uploadMethod: 'PUT',
       testMethod: 'GET',
       prioritizeFirstAndLastChunk:false,
-      target:'/',
       testTarget: null,
       parameterNamespace:'',
       testChunks:false,
@@ -714,7 +730,7 @@
         customHeaders[$.getOpt('typeParameterName')] = $.file.type;
         // customHeaders[$.getOpt('azureBlobTypeParameterName')] = $.getOpt('azureBlobTypeValue');
         customHeaders[$.getOpt('azureBlobTypeParameterName')] = $.getOpt('azureBlobTypeValue');
-        customHeaders[$.getOpt('versionParameterName')] = $.getOpt('versionValue');
+        customHeaders[$.getOpt('msVersionName')] = $.getOpt('msVersion');
 
         if ($.getOpt('withCredentials')) {
           // Access-Control-Allow-Origin: *
@@ -783,11 +799,11 @@
         // Add data from header options
         var customHeaders = {};
         customHeaders['Content-Type'] = 'text/plain; charset=UTF-8';
-        customHeaders[$.getOpt('versionParameterName')] = $.getOpt('versionValue');
+        customHeaders[$.getOpt('msVersionName')] = $.getOpt('msVersion');
         customHeaders[$.getOpt('typeParameterName')] = $.file.type;
 
         // In case pricing tier needs to be set, need to use a newer API.
-        // customHeaders[$.getOpt('versionParameterName')] = '2018-11-09';
+        // customHeaders[$.getOpt('msVersionName')] = '2018-11-09';
         // customHeaders['x-ms-access-tier'] = 'Hot';
 
         if ($.getOpt('withCredentials')) {
@@ -1035,7 +1051,7 @@
         // fileParameterName:'file', // Not used
         // chunkNumberParameterName: 'blockid',
         // dateParameterName: 'x-ms-date', // Maybe comes from SAS
-        // versionParameterName: 'x-ms-version', // Maybe comes from SAS
+        // msVersionName: 'x-ms-version', // Maybe comes from SAS
         // contentLengthParameterName: 'Content-Length',
         // typeParameterName: 'x-ms-blob-content-type',
         // chunkSizeParameterName: 'resumableChunkSize', // Not used
@@ -1115,7 +1131,7 @@
         if(typeof customHeaders === 'function') {
           customHeaders = customHeaders($.fileObj, $);
         }
-        customHeaders[$.getOpt('versionParameterName')] = $.getOpt('versionValue');
+        customHeaders[$.getOpt('msVersionName')] = $.getOpt('msVersion');
 
         if ($.getOpt('withCredentials')) {
           // Access-Control-Allow-Origin: *
