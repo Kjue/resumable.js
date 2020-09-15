@@ -55,6 +55,7 @@
        */
       query:{},
       target:'/',
+      contentType:false,
       headers:{},
 
       /**
@@ -81,7 +82,7 @@
       chunkNumberParameterName: 'blockid',
       dateParameterName: 'x-ms-date',
       contentLengthParameterName: 'Content-Length',
-      typeParameterName: 'x-ms-blob-content-type',
+      contentTypeParameterName: 'x-ms-blob-content-type',
       chunkSizeParameterName: 'resumableChunkSize', // Not used
       totalSizeParameterName: 'resumableTotalSize', // Not used
       identifierParameterName: 'resumableIdentifier', // Not used, assigned per file
@@ -727,7 +728,7 @@
 
         var customHeaders = {};
         // customHeaders[$.getOpt('contentLengthParameterName')] = 0;
-        customHeaders[$.getOpt('typeParameterName')] = $.file.type;
+        customHeaders[$.getOpt('contentTypeParameterName')] = $.getOpt('contentType') || $.file.type;
         // customHeaders[$.getOpt('azureBlobTypeParameterName')] = $.getOpt('azureBlobTypeValue');
         customHeaders[$.getOpt('azureBlobTypeParameterName')] = $.getOpt('azureBlobTypeValue');
         customHeaders[$.getOpt('msVersionName')] = $.getOpt('msVersion');
@@ -800,7 +801,7 @@
         var customHeaders = {};
         customHeaders['Content-Type'] = 'text/plain; charset=UTF-8';
         customHeaders[$.getOpt('msVersionName')] = $.getOpt('msVersion');
-        customHeaders[$.getOpt('typeParameterName')] = $.file.type;
+        customHeaders[$.getOpt('contentTypeParameterName')] = $.getOpt('contentType') || $.file.type;
 
         // In case pricing tier needs to be set, need to use a newer API.
         // customHeaders[$.getOpt('msVersionName')] = '2018-11-09';
@@ -938,7 +939,7 @@
             ['chunkSizeParameterName', $.getOpt('chunkSize')],
             ['contentLengthParameterName', $.endByte - $.startByte],
             ['totalSizeParameterName', $.fileObjSize],
-            ['typeParameterName', $.fileObjType],
+            ['contentTypeParameterName', $.getOpt('contentType') || $.fileObjType],
             ['identifierParameterName', $.fileObj.uniqueIdentifier],
             ['fileNameParameterName', $.fileObj.fileName],
             ['relativePathParameterName', $.fileObj.relativePath],
@@ -1053,7 +1054,7 @@
         // dateParameterName: 'x-ms-date', // Maybe comes from SAS
         // msVersionName: 'x-ms-version', // Maybe comes from SAS
         // contentLengthParameterName: 'Content-Length',
-        // typeParameterName: 'x-ms-blob-content-type',
+        // contentTypeParameterName: 'x-ms-blob-content-type',
         // chunkSizeParameterName: 'resumableChunkSize', // Not used
         // totalSizeParameterName: 'resumableTotalSize', // Not used
         // identifierParameterName: 'resumableIdentifier', // Not used, assigned per file
